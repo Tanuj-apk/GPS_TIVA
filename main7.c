@@ -67,6 +67,9 @@ typedef struct
     uint32_t gps_tow_ms;
     uint32_t gps_system_seconds;
 
+    int32_t  latitude;
+    int32_t  longitude;
+
     uint32_t tAcc_ns;
 
     uint8_t  numSV;
@@ -79,7 +82,7 @@ typedef struct
 } GPS_To_CPU_Frame;
 #pragma pack()
 
-#define GPS_FRAME_LEN 24
+#define GPS_FRAME_LEN sizeof(GPS_To_CPU_Frame)
 
 uint16_t CRC16_Modbus(uint8_t *buf, uint16_t len)
 {
@@ -130,6 +133,9 @@ typedef struct
     uint8_t flags2;
     uint8_t valid;
     uint8_t numSV;
+
+    int32_t lon;   // 1e-7 degree
+    int32_t lat;   // 1e-7 degree
 
 } UBX_PVT_t;
 
@@ -484,6 +490,9 @@ void UBX_Parse_PVT(uint8_t *payload)
     pvt_data.flags2  = payload[22];
     pvt_data.numSV   = payload[23];
 
+    memcpy((void*)&pvt_data.lon, payload + 24, 4);
+    memcpy((void*)&pvt_data.lat, payload + 28, 4);
+
     if ((pvt_data.flags & 0x01) && (pvt_data.valid & 0x02) && // GNSS fix OK and Date valid
         (pvt_data.flags2 & 0x20) && (pvt_data.numSV >= 4)) // Confirmed time and 6 or more sat
         gps_fix_ok = 1;
@@ -525,6 +534,9 @@ void GPS_Send_Frame(void)
 
     frame.status_flags = Build_Status_Flags();
 
+    frame.latitude  = pvt_data.lat;
+    frame.longitude = pvt_data.lon;
+
     frame.crc16 = CRC16_Modbus((uint8_t *)&frame,
                                GPS_FRAME_LEN - 2);
 
@@ -545,7 +557,7 @@ int main(void)
     uint32_t sysClock = SysCtlClockFreqSet(
                             SYSCTL_USE_PLL | SYSCTL_OSC_MAIN |
                             SYSCTL_XTAL_25MHZ | SYSCTL_CFG_VCO_480,
-                            50000000);
+                            120000000);
 
     // 1 ms SysTick for PPS watchdog
     SysTickPeriodSet(sysClock / 1000);
