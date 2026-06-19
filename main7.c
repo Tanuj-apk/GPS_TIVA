@@ -70,6 +70,9 @@ typedef struct
     int32_t  latitude;
     int32_t  longitude;
 
+    uint8_t satellites_in_view;
+    uint8_t max_cno;
+
     uint32_t tAcc_ns;
 
     uint8_t  numSV;
@@ -141,6 +144,18 @@ typedef struct
 
 volatile UBX_PVT_t pvt_data;
 volatile uint8_t pvt_updated = 0;
+
+
+/* ============================================================
+   NAV-SAT VARIABLES
+   ============================================================ */
+volatile uint8_t navsat_numSvs = 0;
+volatile uint8_t navsat_maxCno = 0;
+volatile uint16_t navsat_len = 0;
+volatile uint32_t navsat_count = 0;
+volatile uint8_t dbg_cno[50];
+volatile uint8_t max_cno_svId;
+volatile uint8_t max_cno_gnssId;
 
 /* ============================================================
    PPS INTERRUPT HANDLER
@@ -263,6 +278,14 @@ static const uint8_t UBX_Save_All_To_BBR[] = {
     0x1B,0xA9              // checksum
 };
 
+static const uint8_t UBX_Enable_NAVSAT[] = {
+    0xB5,0x62,0x06,0x8A,0x09,0x00,
+    0x00,0x01,0x00,0x00,
+    0x16,0x00,0x91,0x20,
+    0x01,
+    0x62,0x93
+};
+
 
 void UBX_Send(const uint8_t *data, uint16_t len)
 {
@@ -373,7 +396,7 @@ void UART6_Init(uint32_t sysClk, uint32_t baudrate)
 
 #define UBX_SYNC1       0xB5
 #define UBX_SYNC2       0x62
-#define UBX_MAX_PAYLOAD 256
+#define UBX_MAX_PAYLOAD 512
 
 volatile uint8_t  ubx_class, ubx_id;
 volatile uint16_t ubx_len, ubx_payload_index;
@@ -499,6 +522,41 @@ void UBX_Parse_PVT(uint8_t *payload)
     else
         gps_fix_ok = 0;
 }
+
+void UBX_Parse_NAVSAT(uint8_t *payload, uint16_t len)
+{
+    uint8_t numSvs;
+    uint8_t maxCno = 0;
+    uint8_t i;
+
+    if(len < 8)
+        return;
+
+    numSvs = payload[5];
+
+    for(i = 0; i < numSvs; i++)
+    {
+        uint16_t base = 8 + (i * 12);
+
+        dbg_cno[i] = payload[base + 2];
+
+        if((base + 12) > len)
+            break;
+
+        uint8_t cno = payload[base + 2];
+
+        if(cno > maxCno)
+        {
+            maxCno = cno;
+
+            max_cno_svId = payload[base + 1];
+            max_cno_gnssId = payload[base + 0];
+        }
+    }
+
+    navsat_numSvs = numSvs;
+    navsat_maxCno = maxCno;
+}
 uint16_t Build_Status_Flags(void)
 {
     uint16_t flags = 0;
@@ -536,6 +594,9 @@ void GPS_Send_Frame(void)
 
     frame.latitude  = pvt_data.lat;
     frame.longitude = pvt_data.lon;
+
+    frame.satellites_in_view = navsat_numSvs;
+    frame.max_cno = navsat_maxCno;
 
     frame.crc16 = CRC16_Modbus((uint8_t *)&frame,
                                GPS_FRAME_LEN - 2);
@@ -576,6 +637,9 @@ int main(void)
     SysCtlDelay(sysClock / 20);
 
     UBX_Send(UBX_Enable_TIMEGPS, sizeof(UBX_Enable_TIMEGPS));
+    SysCtlDelay(sysClock / 20);
+
+    UBX_Send(UBX_Enable_NAVSAT, sizeof(UBX_Enable_NAVSAT));
     SysCtlDelay(sysClock / 20);
 
     UBX_Send(UBX_Enable_NavIC, sizeof(UBX_Enable_NavIC));
@@ -626,10 +690,15 @@ int main(void)
                     }
                 }
             }
-
             if (ubx_class == 0x01 && ubx_id == 0x07 && ubx_len == 92)
             {
                 UBX_Parse_PVT(ubx_payload);
+            }
+            if (ubx_class == 0x01 && ubx_id == 0x35)
+            {
+                navsat_count++;
+                navsat_len = ubx_len;
+                UBX_Parse_NAVSAT(ubx_payload, ubx_len);
             }
         }
 
