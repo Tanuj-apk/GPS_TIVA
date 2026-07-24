@@ -12,7 +12,34 @@
 #include "driverlib/uart.h"
 #include "driverlib/interrupt.h"
 #include "driverlib/systick.h"
+#include "driverlib/eeprom.h"
 
+/* ============================================================
+   INTERNAL EEPROM
+   ============================================================ */
+#define EEPROM_DEVICE_ID_OFFSET    0
+uint32_t g_deviceID = 0;
+uint8_t  g_cardID = 1;
+
+bool EEPROM_Init(void)
+{
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_EEPROM0);
+
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_EEPROM0));
+
+    return (EEPROMInit() == EEPROM_INIT_OK);
+}
+bool EEPROM_ReadDeviceID(uint32_t *deviceID)
+{
+    if(deviceID == NULL)
+        return false;
+
+    EEPROMRead(deviceID,
+               EEPROM_DEVICE_ID_OFFSET,
+               sizeof(uint32_t));
+
+    return true;
+}
 /* ============================================================
    SYSTEM TICK (1 ms) FOR PPS WATCHDOG
    ============================================================ */
@@ -578,7 +605,8 @@ void GPS_Send_Frame(void)
     frame.sync2  = 0x5A;
     frame.length = GPS_FRAME_LEN;
 
-    frame.card_id = 1;   // GPS card ID
+//    frame.card_id = 1;   // GPS card ID
+    frame.card_id = g_cardID; // GPS card ID based on Device ID
 
     frame.gps_week = timegps_data.week;
     frame.gps_tow_ms = timegps_data.iTOW;
@@ -624,6 +652,26 @@ int main(void)
     SysTickPeriodSet(sysClock / 1000);
     SysTickIntEnable();
     SysTickEnable();
+
+    if(!EEPROM_Init())
+    {
+        while(1);
+    }
+    if(EEPROM_ReadDeviceID(&g_deviceID))
+    {
+        if(g_deviceID & 1U)
+        {
+            g_cardID = 1;      // Odd Device ID
+        }
+        else
+        {
+            g_cardID = 2;      // Even Device ID
+        }
+    }
+    else
+    {
+        g_cardID = 1;          // Default
+    }
 
     UART7_Init(sysClock, 38400);
     UART6_Init(sysClock, 115200);   // <-- don't forget this!
