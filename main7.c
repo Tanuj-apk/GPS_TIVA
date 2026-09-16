@@ -97,16 +97,19 @@ typedef struct
     int32_t  latitude;
     int32_t  longitude;
 
-    uint8_t satellites_in_view;
-    uint8_t max_cno;
-
     uint32_t tAcc_ns;
 
     uint8_t  numSV;
+    uint8_t  satellites_in_view;
+    uint8_t  max_cno;
     uint8_t  gps_fix_ok;
     uint8_t  pps_ok;
 
     uint16_t status_flags;
+
+    /* NEW */
+    uint32_t firmware_checksum;
+
     uint16_t crc16;
 
 } GPS_To_CPU_Frame;
@@ -134,6 +137,44 @@ uint16_t CRC16_Modbus(uint8_t *buf, uint16_t len)
     return crc;
 }
 
+/* ============================================================
+   FIRMWARE FLASH CRC
+   ============================================================ */
+volatile uint32_t calculated_firmware_checksum = 0U;
+
+#define FIRMWARE_CRC_START    0x00000000UL
+#define FIRMWARE_CRC_END      0x00001F67UL
+
+uint32_t calculate_firmware_crc(void)
+{
+    uint32_t crc = 0xFFFFFFFFUL;
+    uint32_t address;
+    uint8_t byte;
+    uint8_t bit;
+
+    for(address = FIRMWARE_CRC_START;
+        address <= FIRMWARE_CRC_END;
+        address++)
+    {
+        byte = *((volatile uint8_t *)address);
+
+        crc ^= byte;
+
+        for(bit = 0U; bit < 8U; bit++)
+        {
+            if(crc & 1U)
+            {
+                crc = (crc >> 1U) ^ 0xEDB88320UL;
+            }
+            else
+            {
+                crc >>= 1U;
+            }
+        }
+    }
+
+    return crc ^ 0xFFFFFFFFUL;
+}
 /* ============================================================
    TIMEGPS STRUCTURE
    ============================================================ */
@@ -620,6 +661,9 @@ void GPS_Send_Frame(void)
 
     frame.status_flags = Build_Status_Flags();
 
+    /* NEW */
+    frame.firmware_checksum = calculated_firmware_checksum;
+
     frame.latitude  = pvt_data.lat;
     frame.longitude = pvt_data.lon;
 
@@ -647,6 +691,8 @@ int main(void)
                             SYSCTL_USE_PLL | SYSCTL_OSC_MAIN |
                             SYSCTL_XTAL_25MHZ | SYSCTL_CFG_VCO_480,
                             120000000);
+
+    calculated_firmware_checksum = calculate_firmware_crc();
 
     // 1 ms SysTick for PPS watchdog
     SysTickPeriodSet(sysClock / 1000);
